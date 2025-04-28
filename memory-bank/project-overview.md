@@ -1,1 +1,1 @@
-
+The application is a mobile app built with React Native and Expo, designed for managing tailoring orders. It caters to two user roles: karigar (tailor) and muteer (manager). The app allows for creating, tracking, and updating orders, managing customer information, uploading measurement sheets, and processing payments. It uses Supabase for backend services, including authentication, database, and storage.

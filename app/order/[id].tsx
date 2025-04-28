@@ -36,9 +36,29 @@ import Colors from '@/constants/Colors';
 import { useOrderStore } from '@/store/orderStore';
 import { useAuthStore } from '@/store/authStore';
 import { useNotificationStore } from '@/store/notificationStore';
-import { compressImage, sendWhatsAppMessage } from '@/utils/helpers';
+import { compressImage, sendWhatsAppMessage, WhatsAppTemplates, validatePaymentAmount } from '@/utils/helpers';
 import dayjs from 'dayjs';
+import { SafeAreaView } from 'react-native-safe-area-context';
 
+/**
+ * OrderDetailsScreen Component
+ * 
+ * Displays detailed information about a specific order, including:
+ * - Order status and basic information
+ * - Customer details
+ * - Payment information
+ * - Fitoora (measurement sheet) images
+ * - Payment history
+ * 
+ * Features:
+ * - View and update order status
+ * - Upload and view fitoora images
+ * - Add payments
+ * - Send WhatsApp notifications
+ * - Camera integration for capturing fitoora images
+ * 
+ * @component
+ */
 export default function OrderDetailsScreen() {
   const { id, openCamera } = useLocalSearchParams();
   const [refreshing, setRefreshing] = useState(false);
@@ -65,41 +85,54 @@ export default function OrderDetailsScreen() {
   } = useOrderStore();
   const { sendStitchedNotification } = useNotificationStore();
 
+  /**
+   * Loads all necessary data for the order when the component mounts
+   * or when the order ID changes.
+   */
   useEffect(() => {
     if (id) {
       loadOrderData();
     }
   }, [id]);
 
+  /**
+   * Fetches order details, fitooras, and payments data in parallel for faster loading.
+   */
   const loadOrderData = async () => {
-    await getOrderById(id as string);
-    await fetchFitoorasByOrderId(id as string);
-    await fetchPaymentsByOrderId(id as string);
+    if (!id) return;
+    await Promise.all([
+      getOrderById(id as string),
+      fetchFitoorasByOrderId(id as string),
+      fetchPaymentsByOrderId(id as string),
+    ]);
   };
 
+  /**
+   * Handles pull-to-refresh functionality.
+   * Reloads all order data.
+   */
   const onRefresh = async () => {
     setRefreshing(true);
     await loadOrderData();
     setRefreshing(false);
   };
 
+  /**
+   * Adds a new payment to the order.
+   * Validates the payment amount and updates the order's remaining amount.
+   */
   const handleAddPayment = async () => {
     if (!currentOrder) return;
     
-    const amount = parseFloat(paymentAmount);
-    if (isNaN(amount) || amount <= 0) {
-      Alert.alert('خطأ', 'يرجى إدخال مبلغ صحيح أكبر من صفر');
-      return;
-    }
-    
-    if (amount > currentOrder.remaining_amount) {
-      Alert.alert('خطأ', 'المبلغ المدخل أكبر من المبلغ المتبقي');
+    const errorMsg = validatePaymentAmount(paymentAmount, currentOrder.remaining_amount);
+    if (errorMsg) {
+      Alert.alert('خطأ', errorMsg);
       return;
     }
     
     const { error } = await addPayment({
       order_id: currentOrder.id,
-      amount,
+      amount: parseFloat(paymentAmount),
       notes: paymentNote || null,
       payment_date: new Date().toISOString(),
     });
@@ -114,6 +147,10 @@ export default function OrderDetailsScreen() {
     Alert.alert('تم بنجاح', 'تمت إضافة الدفعة بنجاح');
   };
   
+  /**
+   * Updates the order status to 'stitched' and sends a notification.
+   * Only available for Muteer role.
+   */
   const handleMarkAsStitched = async () => {
     if (!currentOrder) return;
     
@@ -122,6 +159,11 @@ export default function OrderDetailsScreen() {
     Alert.alert('تم بنجاح', 'تم تحديث حالة الطلب إلى "تم الخياطة"');
   };
   
+  /**
+   * Updates the order status to 'delivered'.
+   * Shows a warning if there's a remaining balance.
+   * Only available for Muteer role.
+   */
   const handleMarkAsDelivered = async () => {
     if (!currentOrder) return;
     
@@ -148,13 +190,50 @@ export default function OrderDetailsScreen() {
     Alert.alert('تم بنجاح', 'تم تحديث حالة الطلب إلى "تم التسليم"');
   };
   
+  /**
+   * Sends a WhatsApp message to notify the customer that their order is ready.
+   * Uses the pre-defined template from WhatsAppTemplates.
+   */
   const handleSendWhatsAppMessage = () => {
     if (!currentOrder) return;
     
-    const message = `السلام عليكم ${currentOrder.customer_name}، طلبك رقم ${currentOrder.serial_number} جاهز للاستلام. شكرًا لك على ثقتك في الريان للخياطة الرجالية.`;
+    const message = WhatsAppTemplates.orderReady(
+      currentOrder.customer_name,
+      currentOrder.serial_number
+    );
     sendWhatsAppMessage(currentOrder.customer_phone, message);
   };
 
+  /**
+   * Sends a WhatsApp message to request a review from the customer.
+   * Uses the pre-defined template from WhatsAppTemplates.
+   */
+  const handleSendReviewRequest = () => {
+    if (!currentOrder) return;
+    
+    const message = WhatsAppTemplates.reviewRequest(currentOrder.customer_name);
+    sendWhatsAppMessage(currentOrder.customer_phone, message);
+  };
+
+  /**
+   * Sends a WhatsApp message to remind the customer about remaining payment.
+   * Uses the pre-defined template from WhatsAppTemplates.
+   */
+  const handleSendPaymentReminder = () => {
+    if (!currentOrder) return;
+    
+    const message = WhatsAppTemplates.paymentReminder(
+      currentOrder.customer_name,
+      currentOrder.serial_number,
+      currentOrder.remaining_amount
+    );
+    sendWhatsAppMessage(currentOrder.customer_phone, message);
+  };
+
+  /**
+   * Takes a picture using the device camera.
+   * Compresses the image and uploads it as a fitoora.
+   */
   const takePicture = async () => {
     if (!cameraRef.current) return;
     
@@ -168,8 +247,12 @@ export default function OrderDetailsScreen() {
       
       // Upload to Supabase
       if (currentOrder) {
-        await uploadFitoora(currentOrder.id, compressedUri);
-        setShowCamera(false);
+        const { error: uploadError } = await uploadFitoora(currentOrder.id, compressedUri);
+        if (uploadError) {
+          Alert.alert('خطأ', 'حدث خطأ أثناء رفع صورة الفتورة. يرجى المحاولة مرة أخرى.');
+        } else {
+          setShowCamera(false);
+        }
       }
     } catch (error) {
       console.error('Error taking picture:', error);
@@ -177,6 +260,10 @@ export default function OrderDetailsScreen() {
     }
   };
   
+  /**
+   * Opens the device's image picker to select a fitoora image.
+   * Compresses the selected image and uploads it.
+   */
   const pickImage = async () => {
     const result = await ImagePicker.launchImageLibraryAsync({
       mediaTypes: ImagePicker.MediaTypeOptions.Images,
@@ -190,19 +277,22 @@ export default function OrderDetailsScreen() {
       
       // Upload to Supabase
       if (currentOrder) {
-        await uploadFitoora(currentOrder.id, compressedUri);
+        const { error: uploadError } = await uploadFitoora(currentOrder.id, compressedUri);
+        if (uploadError) {
+          Alert.alert('خطأ', 'حدث خطأ أثناء رفع صورة الفتورة. يرجى المحاولة مرة أخرى.');
+        }
       }
     }
   };
   
   if (!currentOrder) {
     return (
-      <View style={styles.container}>
+      <SafeAreaView style={styles.container}>
         <Header title="تفاصيل الطلب" />
         <View style={styles.loadingContainer}>
           <Text style={styles.loadingText}>جاري تحميل البيانات...</Text>
         </View>
-      </View>
+      </SafeAreaView>
     );
   }
   
@@ -211,7 +301,7 @@ export default function OrderDetailsScreen() {
     if (!permission?.granted) {
       // Camera permissions are not granted yet
       return (
-        <View style={styles.container}>
+        <SafeAreaView style={styles.container}>
           <Header title="التقاط صورة الفتورة" />
           <View style={styles.cameraPermissionContainer}>
             <Text style={styles.cameraPermissionText}>
@@ -222,12 +312,12 @@ export default function OrderDetailsScreen() {
               onPress={requestPermission} 
             />
           </View>
-        </View>
+        </SafeAreaView>
       );
     }
     
     return (
-      <View style={styles.container}>
+      <SafeAreaView style={styles.container}>
         <CameraView
           style={styles.camera}
           type={cameraType}
@@ -258,12 +348,12 @@ export default function OrderDetailsScreen() {
             </TouchableOpacity>
           </View>
         </CameraView>
-      </View>
+      </SafeAreaView>
     );
   }
   
   return (
-    <View style={styles.container}>
+    <SafeAreaView style={styles.container}>
       <Header title={`طلب رقم ${currentOrder.serial_number}`} />
       
       <ScrollView
@@ -358,6 +448,15 @@ export default function OrderDetailsScreen() {
                 variant="outline"
                 style={[styles.actionButton, { flex: 1 }]}
               />
+              
+              {currentOrder.remaining_amount > 0 && (
+                <Button
+                  title="تذكير بالدفع"
+                  onPress={handleSendPaymentReminder}
+                  variant="outline"
+                  style={[styles.actionButton, { flex: 1 }]}
+                />
+              )}
               
               <Button
                 title="تم التسليم"
@@ -476,7 +575,7 @@ export default function OrderDetailsScreen() {
           </Card>
         )}
       </ScrollView>
-    </View>
+    </SafeAreaView>
   );
 }
 

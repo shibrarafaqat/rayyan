@@ -7,6 +7,7 @@ import { Cairo_400Regular, Cairo_600SemiBold, Cairo_700Bold } from '@expo-google
 import { SplashScreen } from 'expo-router';
 import { useFrameworkReady } from '@/hooks/useFrameworkReady';
 import { useAuthStore } from '@/store/authStore';
+import { ErrorBoundary } from './_errorBoundary';
 
 // Prevent splash screen from auto-hiding
 SplashScreen.preventAutoHideAsync();
@@ -47,18 +48,20 @@ export default function RootLayout() {
   }
 
   return (
-    <>
-      <Stack screenOptions={{ 
-        headerShown: false,
-        animation: 'slide_from_right',
-      }}>
-        <Stack.Screen name="(auth)" options={{ headerShown: false }} />
-        <Stack.Screen name="(app)" options={{ headerShown: false }} />
-        <Stack.Screen name="order/[id]" options={{ presentation: 'card' }} />
-        <Stack.Screen name="notifications" options={{ presentation: 'modal' }} />
-        <Stack.Screen name="+not-found" options={{ title: 'الصفحة غير موجودة' }} />
-      </Stack>
-      <StatusBar style="auto" />
-    </>
+    <ErrorBoundary>
+      <>
+        <Stack screenOptions={{ 
+          headerShown: false,
+          animation: 'slide_from_right',
+        }}>
+          <Stack.Screen name="(auth)" options={{ headerShown: false }} />
+          <Stack.Screen name="(app)" options={{ headerShown: false }} />
+          <Stack.Screen name="order/[id]" options={{ presentation: 'card' }} />
+          <Stack.Screen name="notifications" options={{ presentation: 'modal' }} />
+          <Stack.Screen name="+not-found" options={{ title: 'الصفحة غير موجودة' }} />
+        </Stack>
+        <StatusBar style="auto" />
+      </>
+    </ErrorBoundary>
   );
 }

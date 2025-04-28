@@ -1,25 +1,49 @@
 import { create } from 'zustand';
 import { supabase, Order, Fitoora, Payment } from '@/utils/supabase';
 
+/**
+ * Interface defining the state and actions for the order management store.
+ * This store handles all order-related operations including creation, updates,
+ * and management of fitooras (measurement sheets) and payments.
+ */
 interface OrderState {
+  /** List of all orders */
   orders: Order[];
+  /** Currently selected order */
   currentOrder: Order | null;
+  /** List of fitooras (measurement sheets) for the current order */
   fitooras: Fitoora[];
+  /** List of payments for the current order */
   payments: Payment[];
+  /** Loading state indicator */
   isLoading: boolean;
+  /** Error message if any operation fails */
   error: string | null;
   
+  /** Fetches all orders from the database */
   fetchOrders: () => Promise<void>;
+  /** Searches for an order by its serial number */
   searchOrderBySerial: (serialNumber: string) => Promise<Order | null>;
+  /** Fetches an order by its ID */
   getOrderById: (id: string) => Promise<Order | null>;
+  /** Creates a new order */
   createOrder: (orderData: Partial<Order>) => Promise<{ data: Order | null; error: Error | null }>;
+  /** Updates the status of an order */
   updateOrderStatus: (id: string, status: Order['status']) => Promise<void>;
+  /** Fetches all fitooras for a specific order */
   fetchFitoorasByOrderId: (orderId: string) => Promise<void>;
+  /** Uploads a new fitoora (measurement sheet) for an order */
   uploadFitoora: (orderId: string, uri: string) => Promise<{ data: Fitoora | null; error: Error | null }>;
+  /** Fetches all payments for a specific order */
   fetchPaymentsByOrderId: (orderId: string) => Promise<void>;
+  /** Adds a new payment to an order */
   addPayment: (payment: Partial<Payment>) => Promise<{ data: Payment | null; error: Error | null }>;
 }
 
+/**
+ * Zustand store for managing orders and related operations.
+ * Provides a centralized state management solution for all order-related functionality.
+ */
 export const useOrderStore = create<OrderState>((set, get) => ({
   orders: [],
   currentOrder: null,
@@ -28,6 +52,10 @@ export const useOrderStore = create<OrderState>((set, get) => ({
   isLoading: false,
   error: null,
 
+  /**
+   * Fetches all orders from the database and updates the store state.
+   * Orders are sorted by creation date in descending order.
+   */
   fetchOrders: async () => {
     set({ isLoading: true, error: null });
     try {
@@ -43,6 +71,13 @@ export const useOrderStore = create<OrderState>((set, get) => ({
     }
   },
 
+  /**
+   * Searches for an order by its serial number.
+   * Updates the currentOrder state if found.
+   * 
+   * @param serialNumber - The serial number to search for
+   * @returns The found order or null if not found
+   */
   searchOrderBySerial: async (serialNumber: string) => {
     set({ isLoading: true, error: null });
     try {
@@ -65,6 +100,12 @@ export const useOrderStore = create<OrderState>((set, get) => ({
     }
   },
 
+  /**
+   * Fetches an order by its ID and updates the currentOrder state.
+   * 
+   * @param id - The ID of the order to fetch
+   * @returns The found order or null if not found
+   */
   getOrderById: async (id: string) => {
     set({ isLoading: true, error: null });
     try {
@@ -87,6 +128,13 @@ export const useOrderStore = create<OrderState>((set, get) => ({
     }
   },
 
+  /**
+   * Creates a new order in the database.
+   * Calculates remaining amount based on total and deposit.
+   * 
+   * @param orderData - The data for the new order
+   * @returns The created order and any error that occurred
+   */
   createOrder: async (orderData: Partial<Order>) => {
     set({ isLoading: true, error: null });
     try {
@@ -119,6 +167,13 @@ export const useOrderStore = create<OrderState>((set, get) => ({
     }
   },
 
+  /**
+   * Updates the status of an order and related timestamps.
+   * Updates both the database and local state.
+   * 
+   * @param id - The ID of the order to update
+   * @param status - The new status to set
+   */
   updateOrderStatus: async (id: string, status: Order['status']) => {
     set({ isLoading: true, error: null });
     try {
@@ -150,17 +205,39 @@ export const useOrderStore = create<OrderState>((set, get) => ({
     }
   },
 
+  /**
+   * Uploads a fitoora (measurement sheet) image for an order.
+   * Handles image compression, validation, and storage.
+   * 
+   * @param orderId - The ID of the order to attach the fitoora to
+   * @param uri - The URI of the image to upload
+   * @returns The created fitoora record and any error that occurred
+   */
   uploadFitoora: async (orderId: string, uri: string) => {
     set({ isLoading: true, error: null });
     try {
-      // First upload the image to storage
+      // Validate file type
+      const fileExtension = uri.split('.').pop()?.toLowerCase();
+      if (!fileExtension || !['jpg', 'jpeg', 'png'].includes(fileExtension)) {
+        throw new Error('Only JPG and PNG images are allowed');
+      }
+
+      // First compress the image
+      const compressedUri = await compressImage(uri);
+      
+      // Generate unique filename
       const fileName = `${orderId}_${new Date().getTime()}.jpg`;
       const filePath = `${fileName}`;
       
       // Fetch the binary data
-      const response = await fetch(uri);
+      const response = await fetch(compressedUri);
       const blob = await response.blob();
       
+      // Check file size after compression
+      if (blob.size > 1000000) { // 1MB limit
+        throw new Error('Image is too large after compression. Please try a different image.');
+      }
+
       // Upload to Supabase Storage
       const { error: uploadError } = await supabase
         .storage
@@ -171,7 +248,12 @@ export const useOrderStore = create<OrderState>((set, get) => ({
           upsert: false
         });
 
-      if (uploadError) throw uploadError;
+      if (uploadError) {
+        if (uploadError.message.includes('duplicate')) {
+          throw new Error('An image with this name already exists. Please try again.');
+        }
+        throw uploadError;
+      }
 
       // Get public URL
       const { data: { publicUrl } } = supabase
@@ -205,6 +287,12 @@ export const useOrderStore = create<OrderState>((set, get) => ({
     }
   },
 
+  /**
+   * Fetches all fitooras for a specific order.
+   * Updates the fitooras state with the fetched data.
+   * 
+   * @param orderId - The ID of the order to fetch fitooras for
+   */
   fetchFitoorasByOrderId: async (orderId: string) => {
     set({ isLoading: true, error: null });
     try {
@@ -221,6 +309,12 @@ export const useOrderStore = create<OrderState>((set, get) => ({
     }
   },
 
+  /**
+   * Fetches all payments for a specific order.
+   * Updates the payments state with the fetched data.
+   * 
+   * @param orderId - The ID of the order to fetch payments for
+   */
   fetchPaymentsByOrderId: async (orderId: string) => {
     set({ isLoading: true, error: null });
     try {
@@ -237,6 +331,14 @@ export const useOrderStore = create<OrderState>((set, get) => ({
     }
   },
 
+  /**
+   * Adds a new payment to an order.
+   * Updates both the database and local state.
+   * Also updates the order's remaining amount.
+   * 
+   * @param payment - The payment data to add
+   * @returns The created payment and any error that occurred
+   */
   addPayment: async (payment: Partial<Payment>) => {
     set({ isLoading: true, error: null });
     try {

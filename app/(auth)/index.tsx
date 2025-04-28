@@ -16,6 +16,7 @@ import Colors from '@/constants/Colors';
 import Input from '@/components/ui/Input';
 import Button from '@/components/ui/Button';
 import { useAuthStore } from '@/store/authStore';
+import logo from '@/assets/images/logo.png';
 
 export default function Login() {
   const [email, setEmail] = useState('');
@@ -64,7 +65,7 @@ export default function Login() {
         >
           <View style={styles.topSection}>
             <Image
-              source={{ uri: 'https://i.ibb.co/7t3f0cT/al-rayyan-logo.png' }}
+              source={logo}
               style={styles.logo}
             />
             <Text style={styles.title}>الريان للخياطة الرجالية</Text>

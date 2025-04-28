@@ -10,7 +10,8 @@ import {
   Keyboard,
   Alert,
   TouchableOpacity,
-  Image
+  Image,
+  SafeAreaView
 } from 'react-native';
 import { useRouter } from 'expo-router';
 import { Hash, User, Phone, Banknote, CreditCard, FileText, CircleCheck as CheckCircle, Camera as CameraIcon, Image as ImageIcon, Plus } from 'lucide-react-native';
@@ -23,7 +24,7 @@ import Button from '@/components/ui/Button';
 import Colors from '@/constants/Colors';
 import { useOrderStore } from '@/store/orderStore';
 import { useAuthStore } from '@/store/authStore';
-import { compressImage } from '@/utils/helpers';
+import { compressImage, validateOrderFields } from '@/utils/helpers';
 
 export default function AddOrderScreen() {
   const [serialNumber, setSerialNumber] = useState('');
@@ -44,40 +45,24 @@ export default function AddOrderScreen() {
   const router = useRouter();
   
   const validateForm = () => {
-    const newErrors: {[key: string]: string} = {};
-    
-    if (!serialNumber) newErrors.serialNumber = 'رقم الطلب مطلوب';
-    if (!customerName) newErrors.customerName = 'اسم العميل مطلوب';
-    if (!customerPhone) newErrors.customerPhone = 'رقم الهاتف مطلوب';
-    if (!totalAmount) newErrors.totalAmount = 'المبلغ الإجمالي مطلوب';
-    
-    // Validate phone number format (Saudi format)
-    if (customerPhone && !/^(05)[0-9]{8}$|^(5)[0-9]{8}$/.test(customerPhone)) {
-      newErrors.customerPhone = 'صيغة رقم الهاتف غير صحيحة';
-    }
-    
-    // Validate amounts
-    const total = parseFloat(totalAmount);
-    const deposit = depositAmount ? parseFloat(depositAmount) : 0;
-    
-    if (isNaN(total) || total <= 0) {
-      newErrors.totalAmount = 'يجب أن يكون المبلغ الإجمالي رقماً موجباً';
-    }
-    
-    if (depositAmount && (isNaN(deposit) || deposit < 0)) {
-      newErrors.depositAmount = 'يجب أن يكون العربون رقماً موجباً';
-    }
-    
-    if (deposit > total) {
-      newErrors.depositAmount = 'لا يمكن أن يكون العربون أكبر من المبلغ الإجمالي';
-    }
-    
+    const newErrors = validateOrderFields({
+      serialNumber,
+      customerName,
+      customerPhone,
+      totalAmount,
+      depositAmount,
+    });
     setErrors(newErrors);
     return Object.keys(newErrors).length === 0;
   };
   
   const handleCreateOrder = async () => {
-    if (!validateForm()) return;
+    if (!validateForm()) {
+      if (errors.form) {
+        Alert.alert('خطأ', errors.form);
+      }
+      return;
+    }
     
     const orderData = {
       serial_number: serialNumber,
@@ -100,7 +85,11 @@ export default function AddOrderScreen() {
       // Upload all selected images
       if (selectedImages.length > 0) {
         for (const imageUri of selectedImages) {
-          await uploadFitoora(newOrder.id, imageUri);
+          const { error: uploadError } = await uploadFitoora(newOrder.id, imageUri);
+          if (uploadError) {
+            Alert.alert('خطأ', 'حدث خطأ أثناء رفع صورة الفتورة. قد لا تكون بعض الصور قد تم حفظها.');
+            break;
+          }
         }
       }
       
@@ -169,7 +158,7 @@ export default function AddOrderScreen() {
   if (showCamera) {
     if (!permission?.granted) {
       return (
-        <View style={styles.container}>
+        <SafeAreaView style={styles.container}>
           <Header title="التقاط صورة الفتورة" />
           <View style={styles.cameraPermissionContainer}>
             <Text style={styles.cameraPermissionText}>
@@ -180,12 +169,12 @@ export default function AddOrderScreen() {
               onPress={requestPermission} 
             />
           </View>
-        </View>
+        </SafeAreaView>
       );
     }
     
     return (
-      <View style={styles.container}>
+      <SafeAreaView style={styles.container}>
         <CameraView
           style={styles.camera}
           type={cameraType}
@@ -216,151 +205,153 @@ export default function AddOrderScreen() {
             </TouchableOpacity>
           </View>
         </CameraView>
-      </View>
+      </SafeAreaView>
     );
   }
   
   return (
-    <TouchableWithoutFeedback onPress={Keyboard.dismiss}>
-      <KeyboardAvoidingView 
-        style={styles.container}
-        behavior={Platform.OS === 'ios' ? 'padding' : undefined}
-        keyboardVerticalOffset={Platform.OS === 'ios' ? 50 : 0}
-      >
-        <Header title="إضافة طلب جديد" showBack={false} />
-        
-        <ScrollView 
-          style={styles.scrollView}
-          contentContainerStyle={styles.content}
-          keyboardShouldPersistTaps="handled"
-          removeClippedSubviews={Platform.OS === 'android'}
+    <SafeAreaView style={styles.container}>
+      <TouchableWithoutFeedback onPress={Keyboard.dismiss}>
+        <KeyboardAvoidingView 
+          style={{ flex: 1 }}
+          behavior={Platform.OS === 'ios' ? 'padding' : undefined}
+          keyboardVerticalOffset={Platform.OS === 'ios' ? 50 : 0}
         >
-          <Card>
-            <Text style={styles.title}>معلومات الطلب</Text>
-            
-            <Input
-              label="رقم الطلب"
-              placeholder="أدخل رقم الطلب التسلسلي"
-              value={serialNumber}
-              onChangeText={setSerialNumber}
-              keyboardType="numeric"
-              error={errors.serialNumber}
-              leftIcon={<Hash size={20} color={Colors.neutral[500]} />}
-            />
-            
-            <Input
-              label="اسم العميل"
-              placeholder="أدخل اسم العميل"
-              value={customerName}
-              onChangeText={setCustomerName}
-              error={errors.customerName}
-              leftIcon={<User size={20} color={Colors.neutral[500]} />}
-            />
-            
-            <Input
-              label="رقم الهاتف"
-              placeholder="05xxxxxxxx"
-              value={customerPhone}
-              onChangeText={setCustomerPhone}
-              keyboardType="phone-pad"
-              error={errors.customerPhone}
-              leftIcon={<Phone size={20} color={Colors.neutral[500]} />}
-            />
-            
-            <View style={styles.amountsContainer}>
+          <Header title="إضافة طلب جديد" showBack={false} />
+          
+          <ScrollView 
+            style={styles.scrollView}
+            contentContainerStyle={styles.content}
+            keyboardShouldPersistTaps="handled"
+            removeClippedSubviews={Platform.OS === 'android'}
+          >
+            <Card>
+              <Text style={styles.title}>معلومات الطلب</Text>
+              
               <Input
-                label="المبلغ الإجمالي"
-                placeholder="أدخل المبلغ الإجمالي"
-                value={totalAmount}
-                onChangeText={setTotalAmount}
+                label="رقم الطلب"
+                placeholder="أدخل رقم الطلب التسلسلي"
+                value={serialNumber}
+                onChangeText={setSerialNumber}
                 keyboardType="numeric"
-                error={errors.totalAmount}
-                leftIcon={<Banknote size={20} color={Colors.neutral[500]} />}
-                containerStyle={styles.amountInput}
+                error={errors.serialNumber}
+                leftIcon={<Hash size={20} color={Colors.neutral[500]} />}
               />
               
               <Input
-                label="العربون (اختياري)"
-                placeholder="أدخل مبلغ العربون"
-                value={depositAmount}
-                onChangeText={setDepositAmount}
-                keyboardType="numeric"
-                error={errors.depositAmount}
-                leftIcon={<CreditCard size={20} color={Colors.neutral[500]} />}
-                containerStyle={styles.amountInput}
+                label="اسم العميل"
+                placeholder="أدخل اسم العميل"
+                value={customerName}
+                onChangeText={setCustomerName}
+                error={errors.customerName}
+                leftIcon={<User size={20} color={Colors.neutral[500]} />}
               />
-            </View>
-            
-            <View style={styles.remainingContainer}>
-              <Text style={styles.remainingLabel}>المبلغ المتبقي:</Text>
-              <Text style={styles.remainingValue}>
-                {remainingAmount()} ريال
-              </Text>
-            </View>
-            
-            <Input
-              label="ملاحظات (اختياري)"
-              placeholder="أدخل أي ملاحظات إضافية"
-              value={notes}
-              onChangeText={setNotes}
-              multiline
-              numberOfLines={4}
-              textAlignVertical="top"
-              leftIcon={<FileText size={20} color={Colors.neutral[500]} />}
-              inputContainerStyle={styles.notesInput}
-            />
-            
-            {/* Fitoora Images Section */}
-            <View style={styles.fitooraSection}>
-              <Text style={styles.fitooraTitle}>صور الفتورة (اختياري)</Text>
               
-              <View style={styles.imageGrid}>
-                {selectedImages.map((uri, index) => (
-                  <View key={index} style={styles.imageContainer}>
-                    <Image source={{ uri }} style={styles.image} />
+              <Input
+                label="رقم الهاتف"
+                placeholder="05xxxxxxxx"
+                value={customerPhone}
+                onChangeText={setCustomerPhone}
+                keyboardType="phone-pad"
+                error={errors.customerPhone}
+                leftIcon={<Phone size={20} color={Colors.neutral[500]} />}
+              />
+              
+              <View style={styles.amountsContainer}>
+                <Input
+                  label="المبلغ الإجمالي"
+                  placeholder="أدخل المبلغ الإجمالي"
+                  value={totalAmount}
+                  onChangeText={setTotalAmount}
+                  keyboardType="numeric"
+                  error={errors.totalAmount}
+                  leftIcon={<Banknote size={20} color={Colors.neutral[500]} />}
+                  containerStyle={styles.amountInput}
+                />
+                
+                <Input
+                  label="العربون (اختياري)"
+                  placeholder="أدخل مبلغ العربون"
+                  value={depositAmount}
+                  onChangeText={setDepositAmount}
+                  keyboardType="numeric"
+                  error={errors.depositAmount}
+                  leftIcon={<CreditCard size={20} color={Colors.neutral[500]} />}
+                  containerStyle={styles.amountInput}
+                />
+              </View>
+              
+              <View style={styles.remainingContainer}>
+                <Text style={styles.remainingLabel}>المبلغ المتبقي:</Text>
+                <Text style={styles.remainingValue}>
+                  {remainingAmount()} ريال
+                </Text>
+              </View>
+              
+              <Input
+                label="ملاحظات (اختياري)"
+                placeholder="أدخل أي ملاحظات إضافية"
+                value={notes}
+                onChangeText={setNotes}
+                multiline
+                numberOfLines={4}
+                textAlignVertical="top"
+                leftIcon={<FileText size={20} color={Colors.neutral[500]} />}
+                inputContainerStyle={styles.notesInput}
+              />
+              
+              {/* Fitoora Images Section */}
+              <View style={styles.fitooraSection}>
+                <Text style={styles.fitooraTitle}>صور الفتورة (اختياري)</Text>
+                
+                <View style={styles.imageGrid}>
+                  {selectedImages.map((uri, index) => (
+                    <View key={index} style={styles.imageContainer}>
+                      <Image source={{ uri }} style={styles.image} />
+                      <TouchableOpacity
+                        style={styles.removeImage}
+                        onPress={() => setSelectedImages(prev => 
+                          prev.filter((_, i) => i !== index)
+                        )}
+                      >
+                        <Text style={styles.removeImageText}>×</Text>
+                      </TouchableOpacity>
+                    </View>
+                  ))}
+                  
+                  <View style={styles.addImageButtons}>
                     <TouchableOpacity
-                      style={styles.removeImage}
-                      onPress={() => setSelectedImages(prev => 
-                        prev.filter((_, i) => i !== index)
-                      )}
+                      style={styles.addImageButton}
+                      onPress={() => setShowCamera(true)}
                     >
-                      <Text style={styles.removeImageText}>×</Text>
+                      <CameraIcon size={24} color={Colors.primary.DEFAULT} />
+                      <Text style={styles.addImageText}>التقاط صورة</Text>
+                    </TouchableOpacity>
+                    
+                    <TouchableOpacity
+                      style={styles.addImageButton}
+                      onPress={pickImage}
+                    >
+                      <ImageIcon size={24} color={Colors.primary.DEFAULT} />
+                      <Text style={styles.addImageText}>اختيار من المعرض</Text>
                     </TouchableOpacity>
                   </View>
-                ))}
-                
-                <View style={styles.addImageButtons}>
-                  <TouchableOpacity
-                    style={styles.addImageButton}
-                    onPress={() => setShowCamera(true)}
-                  >
-                    <CameraIcon size={24} color={Colors.primary.DEFAULT} />
-                    <Text style={styles.addImageText}>التقاط صورة</Text>
-                  </TouchableOpacity>
-                  
-                  <TouchableOpacity
-                    style={styles.addImageButton}
-                    onPress={pickImage}
-                  >
-                    <ImageIcon size={24} color={Colors.primary.DEFAULT} />
-                    <Text style={styles.addImageText}>اختيار من المعرض</Text>
-                  </TouchableOpacity>
                 </View>
               </View>
-            </View>
-            
-            <Button
-              title="إضافة الطلب"
-              onPress={handleCreateOrder}
-              loading={isLoading}
-              fullWidth
-              icon={<CheckCircle size={20} color="white" />}
-              style={styles.submitButton}
-            />
-          </Card>
-        </ScrollView>
-      </KeyboardAvoidingView>
-    </TouchableWithoutFeedback>
+              
+              <Button
+                title="إضافة الطلب"
+                onPress={handleCreateOrder}
+                loading={isLoading}
+                fullWidth
+                icon={<CheckCircle size={20} color="white" />}
+                style={styles.submitButton}
+              />
+            </Card>
+          </ScrollView>
+        </KeyboardAvoidingView>
+      </TouchableWithoutFeedback>
+    </SafeAreaView>
   );
 }
 
